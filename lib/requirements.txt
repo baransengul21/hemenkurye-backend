@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-supabase
 pydantic
+bcrypt
 requests
+email-validator

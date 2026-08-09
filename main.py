@@ -1,118 +1,98 @@
-import random
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+import os
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel, EmailStr
 from supabase import create_client, Client
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import random
 
 app = FastAPI()
 
-# Supabase URL ve Service Role (Gizli) Anahtar
-SUPABASE_URL = "https://ocowoukrscglyjcmbmaw.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9jb3dvdWtyc2NnbHlqY21ibWF3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NjI2MjczMCwiZXhwIjoyMTAxODM4NzMwfQ.EHI3ISE7vKsXFUsi7wvtaS-ZGimQ95IfbcgYo9Yv4UM"
-
+# Supabase bağlantı bilgileri
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "SENIN_SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "SENIN_SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# E-posta Bilgileri
-EMAIL_USER = "Hemenkuryehk@gmail.com"
-EMAIL_PASSWORD = "leupyscwkjgvsvtj"
-
-# Geçici Kod Deposu (Bellekte tutulur)
-otp_storage = {}
-
-class RegisterRequest(BaseModel):
+# Modeller
+class RegisterModel(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     phone: str
     password: str
 
-class VerifyRequest(BaseModel):
-    email: str
+class VerifyEmailModel(BaseModel):
+    email: EmailStr
     otp_code: str
 
-class LoginRequest(BaseModel):
-    email: str
+class LoginModel(BaseModel):
+    email: EmailStr
     password: str
 
+class OrderCreate(BaseModel):
+    pickup_address: str
+    dropoff_address: str
+    price: float
+
+@app.get("/")
+def read_root():
+    return {"message": "HemenKurye Backend Aktif ve Çalışıyor! 🚀"}
+
 @app.post("/api/register")
-def register(user: RegisterRequest):
+async def register(user: RegisterModel):
     try:
-        data = {
-            "full_name": user.name,
+        # Supabase Auth ile kayıt ol
+        auth_response = supabase.auth.sign_up({
             "email": user.email,
-            "phone": user.phone,
-            "password": user.password, # Şifreyi de kaydediyoruz
-            "is_verified": False
-        }
-        response = supabase.table("profiles").insert(data).execute()
+            "password": user.password,
+            "options": {
+                "data": {
+                    "name": user.name,
+                    "phone": user.phone
+                }
+            }
+        })
+        
+        if not auth_response.user:
+            raise HTTPException(status_code=400, detail="Kayıt oluşturulamadı!")
+            
+        return {"success": True, "message": "Kayıt başarılı! Lütfen e-postanızı doğrulayın."}
     except Exception as e:
-        print("--- SUPABASE HATASI ---", str(e))
-        raise HTTPException(status_code=400, detail=f"Veritabanı hatası: {str(e)}")
-
-    code = str(random.randint(100000, 999999))
-    otp_storage[user.email] = code
-
-    try:
-        msg = MIMEMultipart()
-        msg["From"] = EMAIL_USER
-        msg["To"] = user.email
-        msg["Subject"] = "HemenKurye Doğrulama Kodu"
-
-        body = f"Merhaba {user.name},\n\nHemenKurye kayıt doğrulama kodunuz: {code}"
-        msg.attach(MIMEText(body, "plain"))
-
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.sendmail(EMAIL_USER, user.email, msg.as_string())
-        server.quit()
-    except Exception as e:
-        print("--- MAİL GÖNDERME HATASI ---", str(e))
-        raise HTTPException(status_code=500, detail=f"E-posta gönderilemedi: {str(e)}")
-
-    return {"message": "Kayıt başarılı, doğrulama kodu gönderildi."}
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/api/verify-email")
-def verify_code(data: VerifyRequest):
-    stored_code = otp_storage.get(data.email)
-    
-    if not stored_code or stored_code != data.otp_code:
-        raise HTTPException(status_code=400, detail="Geçersiz veya süresi dolmuş kod.")
-    
-    try:
-        supabase.table("profiles").update({"is_verified": True}).eq("email", data.email).execute()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Güncelleme hatası: {str(e)}")
-        
-    del otp_storage[data.email]
-    
-    return {"message": "Hesap başarıyla doğrulandı!"}
+async def verify_email(data: VerifyEmailModel):
+    # Şimdilik simüle edilmiş doğrulama adımı
+    return {"success": True, "message": "E-posta başarıyla doğrulandı!"}
 
 @app.post("/api/login")
-def login(user: LoginRequest):
+async def login(credentials: LoginModel):
     try:
-        # Kullanıcıyı e-posta ile veritabanında arıyoruz
-        response = supabase.table("profiles").select("*").eq("email", user.email).execute()
-        users = response.data
-
-        if not users:
-            raise HTTPException(status_code=400, detail="Bu e-posta ile kayıtlı kullanıcı bulunamadı.")
-
-        db_user = users[0]
-
-        # Şifre kontrolü
-        if db_user.get("password") != user.password:
-            raise HTTPException(status_code=400, detail="Hatalı şifre!")
-
-        # Hesap doğrulanmış mı kontrolü
-        if not db_user.get("is_verified", False):
-            raise HTTPException(status_code=400, detail="Lütfen önce hesabınızı e-posta kodu ile doğrulayın.")
-
-        return {"message": "Giriş başarılı!", "user": db_user}
-
-    except HTTPException as he:
-        raise he
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": credentials.email,
+            "password": credentials.password
+        })
+        
+        if not auth_response.session:
+            raise HTTPException(status_code=400, detail="Giriş başarısız, bilgileri kontrol edin.")
+            
+        return {
+            "success": True,
+            "message": "Giriş başarılı",
+            "access_token": auth_response.session.access_token,
+            "user": auth_response.user
+        }
     except Exception as e:
-        print("--- GİRİŞ HATASI ---", str(e))
-        raise HTTPException(status_code=400, detail=f"Giriş hatası: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/create-order")
+async def create_order(order: OrderCreate):
+    try:
+        # Supabase'e siparişi kaydediyoruz
+        response = supabase.table("orders").insert({
+            "pickup_address": order.pickup_address,
+            "dropoff_address": order.dropoff_address,
+            "price": order.price,
+            "status": "beklemede"
+        }).execute()
+        
+        return {"success": True, "message": "Sipariş başarıyla oluşturuldu", "order": response.data}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

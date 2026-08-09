@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = "http://127.0.0.1:8080";
+  static const String baseUrl = "https://hemenkurye-backend.onrender.com";
 
   static Future<Map<String, dynamic>> register({
     required String name,

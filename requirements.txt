@@ -3,3 +3,4 @@ uvicorn
 bcrypt
 pydantic
 requests
+email-validator
